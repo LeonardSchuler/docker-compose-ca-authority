@@ -1,0 +1,54 @@
+version: "3"
+
+# creates a certificate authority using smallstep
+# and creates private key (localhost.key) and
+# a signed certificate (localhost.crt) for localhost in the volume .step
+
+services:
+  step-ca:
+    image: smallstep/step-ca
+    ports:
+      - "9000:9000"
+    environment:
+      - DOCKER_STEPCA_INIT_NAME=LocalCA
+      - DOCKER_STEPCA_INIT_DNS_NAMES=localhost,step-ca
+      - DOCKER_STEPCA_INIT_PROVISIONER_NAME=admin
+      - DOCKER_STEPCA_INIT_PASSWORD=password
+    volumes:
+      - step:/home/step
+
+  step-client-init:
+    healthcheck:
+      test: curl -v --fail -f --insecure https://step-ca:9000/health || exit 1
+      interval: 5s
+      timeout: 2s
+      retries: 5
+      start_period: 5s
+    depends_on:
+      - step-ca
+    restart: on-failure
+    environment:
+      - STEPPATH=/root/.step
+    image: smallstep/step-cli
+    volumes:
+      - step:/home/step
+      - .step:/root/.step
+    command: step certificate fingerprint /home/step/certs/root_ca.crt | xargs -I {} step ca bootstrap --ca-url https://step-ca:9000 --fingerprint {}
+    user: root
+
+  step-client-create-certificate:
+    depends_on:
+      - step-client-init
+    image: smallstep/step-cli
+    volumes:
+      - .step:/root/.step
+      - certificate:/root/certificate
+    user: root
+    environment:
+      - STEPPATH=/root/.step
+    # the CA Authority password needs to be provided as a file to step ca certificate
+    command: echo password | xargs -I {} step ca certificate localhost localhost.crt localhost.key --provisioner-password-file={}
+
+volumes:
+  step:
+  .step:
